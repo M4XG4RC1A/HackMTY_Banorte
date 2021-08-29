@@ -1,0 +1,362 @@
+classdef Analisis_exported < matlab.apps.AppBase
+
+    % Properties that correspond to app components
+    properties (Access = public)
+        UIFigure                 matlab.ui.Figure
+        Image                    matlab.ui.control.Image
+        Image2                   matlab.ui.control.Image
+        DataPanel                matlab.ui.container.Panel
+        UITable                  matlab.ui.control.Table
+        ErrorEditField           matlab.ui.control.NumericEditField
+        ErrorEditFieldLabel      matlab.ui.control.Label
+        AosSpinner               matlab.ui.control.Spinner
+        AosSpinnerLabel          matlab.ui.control.Label
+        Lamp                     matlab.ui.control.Lamp
+        ImportarDatosButton      matlab.ui.control.Button
+        UIAxes                   matlab.ui.control.UIAxes
+        PrediccionesPanel        matlab.ui.container.Panel
+        QuincenaDropDown_2       matlab.ui.control.DropDown
+        QuincenaDropDown_2Label  matlab.ui.control.Label
+        MesDropDown_2            matlab.ui.control.DropDown
+        MesDropDown_2Label       matlab.ui.control.Label
+        QuincenaDropDown         matlab.ui.control.DropDown
+        QuincenaDropDownLabel    matlab.ui.control.Label
+        UITable2                 matlab.ui.control.Table
+        MesDropDown              matlab.ui.control.DropDown
+        MesDropDownLabel         matlab.ui.control.Label
+        AoSpinner                matlab.ui.control.Spinner
+        AoSpinnerLabel           matlab.ui.control.Label
+        PrediccionButton         matlab.ui.control.Button
+    end
+
+    
+    properties (Access = private)
+        L
+        Fecha
+        T
+        S
+        Active = false
+    end
+    
+
+    % Callbacks that handle component events
+    methods (Access = private)
+
+        % Button pushed function: ImportarDatosButton
+        function ImportarDatosButtonPushed(app, event)
+            [File, Path, Indx] = uigetfile;
+            filename = [Path File];
+            app.Lamp.Color = [1 0 0];
+            pause(1);
+            %A = importdata(filename);
+            Excel = readtable(filename);
+            DatePre = string(table2array(Excel(:,1))');
+            Inflation = table2array(Excel(:,2))';
+            Date = str2double(erase(DatePre,"/"));
+            disp(Inflation)
+            disp(Date)
+            hold(app.UIAxes,"on");
+            plot(app.UIAxes,Date,Inflation);
+            app.UITable.Data = Excel;
+            
+            %Promedios
+            longitud = (length(Inflation)-mod(length(Inflation),24))/24-1;
+            
+            Date = Date((longitud-10)*24+1:length(Inflation)-mod(length(Inflation),24));
+            Inflation = Inflation((longitud-10)*24+1:length(Inflation)-mod(length(Inflation),24));
+            
+            longitud = app.AosSpinner.Value;
+            
+            mat = zeros(24,longitud);
+            
+            matProm = zeros(length(Inflation)-24,3);
+            PmovFin = 0;
+            
+            for i = 1:length(Inflation)-23
+                if i == length(Inflation)-23
+                    PmovFin = mean(Inflation(i:i+23));
+                else
+                    matProm(i,1) = mean(Inflation(i:i+23));
+                end
+            end
+            
+            for i = 1:length(Inflation)-24
+                if i == length(Inflation)-24
+                    matProm(i,2) = mean([matProm(i) PmovFin]);
+                else
+                    matProm(i,2) = mean([matProm(i) matProm(i+1)]);
+                end
+                matProm(i,3) = Inflation(22+i)/matProm(i,2);
+            end
+            
+            for i = 1:longitud
+                for n = 1:24
+                    if i == longitud && n>22
+                        mat(n,i) = matProm(n-22,3);
+                    else
+                        mat(n,i) = matProm((i-1)*24+n+2,3);
+                    end
+                end
+            end
+            
+            prom = zeros(24,2);
+            
+            for i = 1:24
+                prom(i,1) = mean(mat(i,:));
+            end
+            
+            error = 24/sum(prom(:,1));
+            prom(:,2) = prom(:,1)*error;
+            
+            vect1 = [1:length(Inflation)];
+            coefs = polyfit(vect1,Inflation,1);
+            
+            disp(coefs)
+            Pend = 0.00015;%
+            Ord = 0.144358;%
+            
+            matOrds = zeros(24,3);
+            matOrds(24,1) = Ord;
+            matOrds(24,2) = Pend;
+            matOrds(:,3) = prom(:,2);
+            Ypron = zeros(length(Inflation)-24,2);
+            
+            a = .46115901467;
+            b = .5149637137;
+            y = .4483512603;
+            
+            for i = 1:length(Inflation)-24
+                n = mod(i,24);
+                if n == 0
+                    n = 24;
+                end
+                k = n-1;
+                if k == 0
+                    k = 24;
+                end
+                matOrds(n,1) = a*(Inflation(i)/matOrds(n,3))+(1-a)*(matOrds(k,1)+matOrds(k,2));
+                matOrds(n,2) = b*(matOrds(n,1)-matOrds(k,1))+(1-b)*matOrds(k,2);
+                matOrds(n,3) = y*(Inflation(i)/matOrds(n,1))+(1-y)*matOrds(n,3);
+                Ypron(i,1) = (matOrds(k,1)+matOrds(k,2))*matOrds(n,3);
+            end
+            
+            Inflation2 = Inflation(25:end);
+            errorPron = abs(Inflation2'-Ypron(:,1));
+            app.ErrorEditField.Value = mean(errorPron);
+            
+            plot(app.UIAxes,Date(25:end),Ypron(:,1)','g');
+            hold(app.UIAxes,"off");
+            
+            app.L = matOrds(24,1);
+            app.T = matOrds(24,2);
+            app.S = matOrds(:,3);
+            app.Fecha = Date(end);
+            
+        end
+
+        % Button pushed function: PrediccionButton
+        function PrediccionButtonPushed(app, event)
+            
+            month = double(app.MesDropDown.Value)-48;
+            Quinc = double(app.QuincenaDropDown.Value)-48;
+            Ask = (app.AoSpinner.Value*100+month)*100+Quinc;
+            
+            month2 = double(app.MesDropDown_2.Value)-48;
+            Quinc2 = double(app.QuincenaDropDown_2.Value)-48;
+            Ask2 = (app.AoSpinner.Value*100+month2)*100+Quinc2;
+            
+            p = (Ask- mod(Ask,10000))/10000 - (app.Fecha- mod(app.Fecha,10000))/10000;
+            p2 = (Ask2- mod(Ask2,10000))/10000 - (app.Fecha- mod(app.Fecha,10000))/10000;
+            
+            sPer = app.S((month-1)*2+Quinc:(month2-1)*2+Quinc2);
+            
+            vecTime = ["01/01" '01/02' '02/01' '02/02' '03/01' '03/02' '04/01' '04/02' '05/01' '05/02' '06/01' '06/02' '07/01' '07/02' '08/01' '08/02' '09/01' '09/02' '10/01' '10/02' '11/01' '11/02' '12/01' '12/02'];
+            
+            times = vecTime(1,(month-1)*2+Quinc:(month2-1)*2+Quinc2);
+            
+            predic = (app.L + p*app.T)*sPer;
+            app.UITable2.Data = table(times',predic);
+        end
+    end
+
+    % Component initialization
+    methods (Access = private)
+
+        % Create UIFigure and components
+        function createComponents(app)
+
+            % Create UIFigure and hide until all components are created
+            app.UIFigure = uifigure('Visible', 'off');
+            app.UIFigure.Color = [1 1 1];
+            app.UIFigure.Position = [100 100 662 465];
+            app.UIFigure.Name = 'MATLAB App';
+
+            % Create PrediccionesPanel
+            app.PrediccionesPanel = uipanel(app.UIFigure);
+            app.PrediccionesPanel.Title = 'Predicciones';
+            app.PrediccionesPanel.BackgroundColor = [0.5686 0.2784 0.6196];
+            app.PrediccionesPanel.Position = [332 98 320 367];
+
+            % Create PrediccionButton
+            app.PrediccionButton = uibutton(app.PrediccionesPanel, 'push');
+            app.PrediccionButton.ButtonPushedFcn = createCallbackFcn(app, @PrediccionButtonPushed, true);
+            app.PrediccionButton.Position = [24 321 271 22];
+            app.PrediccionButton.Text = 'Prediccion';
+
+            % Create AoSpinnerLabel
+            app.AoSpinnerLabel = uilabel(app.PrediccionesPanel);
+            app.AoSpinnerLabel.HorizontalAlignment = 'right';
+            app.AoSpinnerLabel.Position = [90 292 27 22];
+            app.AoSpinnerLabel.Text = 'Año';
+
+            % Create AoSpinner
+            app.AoSpinner = uispinner(app.PrediccionesPanel);
+            app.AoSpinner.Position = [131 292 70 22];
+            app.AoSpinner.Value = 2021;
+
+            % Create MesDropDownLabel
+            app.MesDropDownLabel = uilabel(app.PrediccionesPanel);
+            app.MesDropDownLabel.HorizontalAlignment = 'right';
+            app.MesDropDownLabel.Position = [47 262 28 22];
+            app.MesDropDownLabel.Text = 'Mes';
+
+            % Create MesDropDown
+            app.MesDropDown = uidropdown(app.PrediccionesPanel);
+            app.MesDropDown.Items = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'};
+            app.MesDropDown.Position = [90 262 43 22];
+            app.MesDropDown.Value = '1';
+
+            % Create UITable2
+            app.UITable2 = uitable(app.PrediccionesPanel);
+            app.UITable2.ColumnName = {'Fecha'; 'Prediccion'};
+            app.UITable2.RowName = {};
+            app.UITable2.Position = [13 10 294 199];
+
+            % Create QuincenaDropDownLabel
+            app.QuincenaDropDownLabel = uilabel(app.PrediccionesPanel);
+            app.QuincenaDropDownLabel.HorizontalAlignment = 'right';
+            app.QuincenaDropDownLabel.Position = [18 229 57 22];
+            app.QuincenaDropDownLabel.Text = 'Quincena';
+
+            % Create QuincenaDropDown
+            app.QuincenaDropDown = uidropdown(app.PrediccionesPanel);
+            app.QuincenaDropDown.Items = {'1', '2'};
+            app.QuincenaDropDown.Position = [90 229 43 22];
+            app.QuincenaDropDown.Value = '1';
+
+            % Create MesDropDown_2Label
+            app.MesDropDown_2Label = uilabel(app.PrediccionesPanel);
+            app.MesDropDown_2Label.HorizontalAlignment = 'right';
+            app.MesDropDown_2Label.Position = [196 263 28 22];
+            app.MesDropDown_2Label.Text = 'Mes';
+
+            % Create MesDropDown_2
+            app.MesDropDown_2 = uidropdown(app.PrediccionesPanel);
+            app.MesDropDown_2.Items = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'};
+            app.MesDropDown_2.Position = [239 263 43 22];
+            app.MesDropDown_2.Value = '1';
+
+            % Create QuincenaDropDown_2Label
+            app.QuincenaDropDown_2Label = uilabel(app.PrediccionesPanel);
+            app.QuincenaDropDown_2Label.HorizontalAlignment = 'right';
+            app.QuincenaDropDown_2Label.Position = [167 230 57 22];
+            app.QuincenaDropDown_2Label.Text = 'Quincena';
+
+            % Create QuincenaDropDown_2
+            app.QuincenaDropDown_2 = uidropdown(app.PrediccionesPanel);
+            app.QuincenaDropDown_2.Items = {'1', '2'};
+            app.QuincenaDropDown_2.Position = [239 230 43 22];
+            app.QuincenaDropDown_2.Value = '1';
+
+            % Create DataPanel
+            app.DataPanel = uipanel(app.UIFigure);
+            app.DataPanel.Title = 'Data';
+            app.DataPanel.BackgroundColor = [0.5686 0.2784 0.6196];
+            app.DataPanel.Position = [9 11 316 360];
+
+            % Create UIAxes
+            app.UIAxes = uiaxes(app.DataPanel);
+            title(app.UIAxes, 'INPC')
+            xlabel(app.UIAxes, 'Fecha')
+            ylabel(app.UIAxes, 'Inflacion Quincenal')
+            zlabel(app.UIAxes, 'Z')
+            app.UIAxes.Position = [32 125 226 203];
+
+            % Create ImportarDatosButton
+            app.ImportarDatosButton = uibutton(app.DataPanel, 'push');
+            app.ImportarDatosButton.ButtonPushedFcn = createCallbackFcn(app, @ImportarDatosButtonPushed, true);
+            app.ImportarDatosButton.Position = [188 306 100 22];
+            app.ImportarDatosButton.Text = 'Importar Datos';
+
+            % Create Lamp
+            app.Lamp = uilamp(app.DataPanel);
+            app.Lamp.Position = [117 308 20 20];
+            app.Lamp.Color = [0 0.4471 0.7412];
+
+            % Create AosSpinnerLabel
+            app.AosSpinnerLabel = uilabel(app.DataPanel);
+            app.AosSpinnerLabel.HorizontalAlignment = 'right';
+            app.AosSpinnerLabel.Position = [191 115 33 22];
+            app.AosSpinnerLabel.Text = 'Años';
+
+            % Create AosSpinner
+            app.AosSpinner = uispinner(app.DataPanel);
+            app.AosSpinner.Position = [239 115 60 22];
+            app.AosSpinner.Value = 5;
+
+            % Create ErrorEditFieldLabel
+            app.ErrorEditFieldLabel = uilabel(app.DataPanel);
+            app.ErrorEditFieldLabel.HorizontalAlignment = 'right';
+            app.ErrorEditFieldLabel.Position = [26 115 32 22];
+            app.ErrorEditFieldLabel.Text = 'Error';
+
+            % Create ErrorEditField
+            app.ErrorEditField = uieditfield(app.DataPanel, 'numeric');
+            app.ErrorEditField.Position = [73 115 45 22];
+
+            % Create UITable
+            app.UITable = uitable(app.DataPanel);
+            app.UITable.ColumnName = {'Fecha'; 'Valor'};
+            app.UITable.RowName = {};
+            app.UITable.Position = [16 11 283 95];
+
+            % Create Image2
+            app.Image2 = uiimage(app.UIFigure);
+            app.Image2.Position = [356 -85 307 252];
+            app.Image2.ImageSource = 'Banorte.jpeg';
+
+            % Create Image
+            app.Image = uiimage(app.UIFigure);
+            app.Image.Position = [-40 382 223 105];
+            app.Image.ImageSource = 'Hack.png';
+
+            % Show the figure after all components are created
+            app.UIFigure.Visible = 'on';
+        end
+    end
+
+    % App creation and deletion
+    methods (Access = public)
+
+        % Construct app
+        function app = Analisis_exported
+
+            % Create UIFigure and components
+            createComponents(app)
+
+            % Register the app with App Designer
+            registerApp(app, app.UIFigure)
+
+            if nargout == 0
+                clear app
+            end
+        end
+
+        % Code that executes before app deletion
+        function delete(app)
+
+            % Delete UIFigure when app is deleted
+            delete(app.UIFigure)
+        end
+    end
+end
